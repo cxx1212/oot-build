@@ -1,0 +1,68 @@
+# OOT (Switch 2) -> iPhone IPA, Mac-only stages on a GitHub-hosted runner.
+# All Linux-doable work (NUP unpack, asset slimming, shader split) is already
+# done; the runner gets sparse stand-ins (real header+index only) plus the
+# Linux-made stamps/keys, so the build reuses every Linux stage and only runs
+# the Mac-only steps (iOS shader libraries, Xcode build).
+name: oot-iphone
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 240
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 10a684a895e4e46bef8692e6ed11457a374bb6ac
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python deps
+        run: python3 -m pip install lz4 "capstone>=5,<6" fonttools zbic nsz backports.zstd zstandard
+      - name: Disk + toolchain
+        run: |
+          df -h
+          xcodebuild -version
+          python3 --version
+      - name: Download staging kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download oot-stage-1 --pattern 'kit.tar.gz' --dir kitdl
+      - name: Reconstruct sparse inputs
+        run: |
+          tar xzf kitdl/kit.tar.gz
+          python3 kit/reconstruct.py kit work .
+          df -h
+          du -sh work
+      - name: Install build tools
+        run: brew install xcodegen glslang
+      - name: Build IPA
+        run: |
+          NUP="work/nup/The Legend of Zelda Ocarina of Time [0400486024dec000][v131072].nup"
+          python3 scripts/build_ipa_from_nsp.py "$NUP" \
+            --romfs separate --env-file work/env.txt \
+            --app-name "The Legend of Zelda: Ocarina of Time" \
+            --icon kit/icon.jpg \
+            --out work/ZeldaOcarinaOfTime.ipa \
+            --work-dir work/0400486024DEC000_build \
+            --keep-extracted --title-id 0400486024DEC000
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZeldaOcarinaOfTime-ipa
+          path: work/ZeldaOcarinaOfTime.ipa
+          if-no-files-found: error
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oot-build-logs
+          path: work/0400486024DEC000_build/logs
+          if-no-files-found: warn
